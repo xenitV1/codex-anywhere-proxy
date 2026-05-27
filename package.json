@@ -1,0 +1,46 @@
+{
+  "name": "codex-anywhere-proxy",
+  "version": "1.0.13",
+  "description": "Use Codex CLI with any OpenAI-compatible API provider. No OpenAI account needed. No fork needed.",
+  "keywords": [
+    "codex",
+    "openai",
+    "proxy",
+    "cli",
+    "openrouter",
+    "ollama",
+    "llm",
+    "glm",
+    "deepseek"
+  ],
+  "license": "MIT",
+  "main": "proxy.ts",
+  "bin": {
+    "codex-anywhere-proxy": "bin/cli.js",
+    "codex-proxy": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "proxy.ts",
+    ".env.example"
+  ],
+  "scripts": {
+    "start": "bun run proxy.ts",
+    "start:node": "node --experimental-strip-types proxy.ts",
+    "test": "bun run test.ts",
+    "test:node": "node --experimental-strip-types test.ts",
+    "dev": "bun run --watch proxy.ts"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xenitV1/codex-anywhere-proxy.git"
+  },
+  "homepage": "https://github.com/xenitV1/codex-anywhere-proxy",
+  "devDependencies": {
+    "@types/node": "^25.9.1"
+  }
+}
