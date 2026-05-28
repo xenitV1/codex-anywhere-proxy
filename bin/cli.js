@@ -347,6 +347,39 @@ async function selectModels(models, preselected) {
   });
 }
 
+/** Copy proxy runtime files from npm package → ~/.codex-proxy (config.toml untouched). */
+function syncProxyFiles() {
+  const srcDir = getPackageDir();
+  if (!fs.existsSync(INSTALL_DIR)) fs.mkdirSync(INSTALL_DIR, { recursive: true });
+
+  for (const [src, dest] of [["proxy.ts", "proxy.ts"], ["package.json", "package.json"]]) {
+    const srcPath = path.join(srcDir, src);
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, path.join(INSTALL_DIR, dest));
+    }
+  }
+
+  const srcModuleDir = path.join(srcDir, "src");
+  if (fs.existsSync(srcModuleDir)) {
+    const destSrc = path.join(INSTALL_DIR, "src");
+    if (!fs.existsSync(destSrc)) fs.mkdirSync(destSrc, { recursive: true });
+    for (const f of fs.readdirSync(srcModuleDir)) {
+      if (f.endsWith(".ts")) {
+        fs.copyFileSync(path.join(srcModuleDir, f), path.join(destSrc, f));
+      }
+    }
+  }
+}
+
+function readInstalledVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(INSTALL_DIR, "package.json"), "utf-8"));
+    return pkg.version || "unknown";
+  } catch {
+    return null;
+  }
+}
+
 // ─── Commands ────────────────────────────────────────────────────────
 
 async function cmdInstall() {
@@ -375,34 +408,7 @@ async function cmdInstall() {
     log("warn", "Codex CLI not found. Install: https://github.com/openai/codex");
   }
 
-  // ── Copy proxy files
-  const srcDir = getPackageDir();
-  if (!fs.existsSync(INSTALL_DIR)) fs.mkdirSync(INSTALL_DIR, { recursive: true });
-
-  const filesToCopy = [
-    ["proxy.ts", "proxy.ts"],
-    ["package.json", "package.json"],
-  ];
-
-  for (const [src, dest] of filesToCopy) {
-    const srcPath = path.join(srcDir, src);
-    if (fs.existsSync(srcPath)) {
-      fs.copyFileSync(srcPath, path.join(INSTALL_DIR, dest));
-    }
-  }
-
-  // Copy src/ directory
-  const srcModuleDir = path.join(srcDir, "src");
-  if (fs.existsSync(srcModuleDir)) {
-    const destSrc = path.join(INSTALL_DIR, "src");
-    if (!fs.existsSync(destSrc)) fs.mkdirSync(destSrc, { recursive: true });
-    for (const f of fs.readdirSync(srcModuleDir)) {
-      if (f.endsWith(".ts")) {
-        fs.copyFileSync(path.join(srcModuleDir, f), path.join(destSrc, f));
-      }
-    }
-  }
-
+  syncProxyFiles();
   log("ok", `Proxy installed to ${INSTALL_DIR}`);
 
   // ── Interactive Configuration
@@ -580,6 +586,38 @@ async function cmdStop() {
   log("warn", "Proxy is not running.");
 }
 
+async function cmdUpgrade() {
+  if (!fs.existsSync(INSTALL_DIR)) {
+    log("err", "codex-proxy is not installed. Run: codex-proxy install");
+    process.exit(1);
+  }
+
+  let cliVersion = "unknown";
+  try {
+    cliVersion = JSON.parse(fs.readFileSync(path.join(getPackageDir(), "package.json"), "utf-8")).version;
+  } catch {}
+
+  const prev = readInstalledVersion();
+  syncProxyFiles();
+  const next = readInstalledVersion();
+
+  log("ok", `CLI package v${cliVersion} → synced to ${INSTALL_DIR}`);
+  if (prev && next && prev !== next) {
+    log("ok", `Runtime updated: v${prev} → v${next}`);
+  } else if (prev === next) {
+    log("info", `Runtime already at v${next ?? cliVersion}`);
+  }
+
+  if (await isProxyRunning()) {
+    log("info", "Restarting proxy...");
+    await restartService();
+  }
+
+  console.log("");
+  console.log(`  ${BLU}codex-proxy status${R}  — verify version`);
+  console.log("");
+}
+
 async function cmdRestart() {
   await restartService();
 }
@@ -694,7 +732,14 @@ async function cmdLogs() {
 function cmdVersion() {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(getPackageDir(), "package.json"), "utf-8"));
-    console.log(`codex-proxy v${pkg.version}`);
+    const installed = readInstalledVersion();
+    console.log(`codex-proxy CLI v${pkg.version}`);
+    if (installed) {
+      console.log(`codex-proxy runtime (~/.codex-proxy) v${installed}`);
+      if (installed !== pkg.version) {
+        log("warn", "CLI and runtime versions differ — run: codex-proxy upgrade");
+      }
+    }
   } catch {
     console.log("codex-proxy (version unknown)");
   }
@@ -1171,6 +1216,7 @@ function showHelp() {
   console.log(`${BOLD}Commands:${R}`);
   console.log("");
   console.log(`  ${BLU}install${R}    Install and configure (first-time setup)`);
+  console.log(`  ${BLU}upgrade${R}    Sync npm package → ~/.codex-proxy and restart`);
   console.log(`  ${BLU}config${R}     Reconfigure provider, API key, model`);
   console.log(`  ${BLU}start${R}      Start the proxy`);
   console.log(`  ${BLU}stop${R}       Stop the proxy`);
@@ -1190,7 +1236,7 @@ function showHelp() {
 // ─── Main ────────────────────────────────────────────────────────────
 async function main() {
   const command = process.argv[2] || "";
-  const commands = { install: cmdInstall, config: cmdConfig, start: cmdStart, stop: cmdStop, restart: cmdRestart, status: cmdStatus, models: cmdModels, logs: cmdLogs, version: cmdVersion };
+  const commands = { install: cmdInstall, upgrade: cmdUpgrade, config: cmdConfig, start: cmdStart, stop: cmdStop, restart: cmdRestart, status: cmdStatus, models: cmdModels, logs: cmdLogs, version: cmdVersion };
 
   // Aliases
   if (command === "configure") return cmdConfig();

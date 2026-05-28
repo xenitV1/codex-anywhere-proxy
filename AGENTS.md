@@ -189,6 +189,7 @@ Node.js CLI (`bin/cli.js`) — npx compatible, zero dependencies. Manages the fu
 | Command | What it does |
 |---------|-------------|
 | `install` | Full setup: checks Bun, copies proxy files, interactive provider/API key/model config, creates systemd/launchd service |
+| `upgrade` | Sync npm package files to `~/.codex-proxy` (keeps config.toml), restart if running |
 | `config` | Reconfigure provider, API key, or model (restarts proxy if running) |
 | `start` | Starts proxy (tries systemctl/launchd first, falls back to direct Bun) |
 | `stop` | Stops proxy (tries systemctl/launchd first, falls back to PID/port kill) |
