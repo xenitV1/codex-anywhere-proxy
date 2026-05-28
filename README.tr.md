@@ -28,7 +28,7 @@ ve Codex'ü OpenAI API formatını konuşan herhangi bir sağlayıcıyla kullanm
 ## Özellikler
 
 - **Herhangi bir sağlayıcı** — OpenAI chat/completions API uyumlu her sağlayıcıyla çalışır
-- **İnteraktif kurulum** — `npx codex-anywhere-proxy install` sağlayıcı, API anahtarı ve model seçiminde size rehberlik eder
+- **İnteraktif kurulum** — `codex-proxy install` sağlayıcı, API anahtarı ve model seçiminde size rehberlik eder
 - **Sağlayıcıya göre model kataloğu** — Sağlayıcınızı otomatik algılar ve sadece onun modellerini gösterir
 - **CLI yönetimi** — `start`, `stop`, `restart`, `status`, `config`, `models`, `logs` komutları
 - **Streaming** — Gerçek zamanlı token çıktısıyla tam SSE streaming desteği
@@ -46,7 +46,8 @@ ve Codex'ü OpenAI API formatını konuşan herhangi bir sağlayıcıyla kullanm
 ## Hızlı başlangıç
 
 ```bash
-npx codex-anywhere-proxy install
+npm i -g codex-anywhere-proxy
+codex-proxy install
 ```
 
 Bu kadar. CLI şunları yapar:
@@ -67,7 +68,7 @@ codex
 ## CLI komutları
 
 ```bash
-npx codex-anywhere-proxy install    # İlk kurulum (interaktif)
+codex-proxy install    # İlk kurulum (interaktif)
 codex-proxy config     # Sağlayıcı, API anahtarı veya model değiştir
 codex-proxy start      # Proxy'yi başlat
 codex-proxy stop       # Proxy'yi durdur
@@ -78,14 +79,13 @@ codex-proxy logs       # Proxy loglarını izle
 codex-proxy version    # Sürümü göster
 ```
 
-### Global kurulum (isteğe bağlı)
+### Global kurulum olmadan
 
-Global olarak kurarsanız `npx`'i yazmanıza gerek kalmaz:
+Global kurmak istemezseniz komutların başına `npx` ekleyin:
 
 ```bash
-npm i -g codex-anywhere-proxy
-codex-proxy install
-codex-proxy status
+npx codex-anywhere-proxy install
+npx codex-anywhere-proxy status
 ```
 
 ## Desteklenen sağlayıcılar
@@ -182,13 +182,14 @@ codex-proxy restart  # Yeniden başlat
 | Her güncellemede merge çakışmaları | Modüler yapı, herhangi bir Codex sürümüyle çalışır |
 | Patch'ler bakım gerektirir | Proxy runtime'dan bağımsızdır |
 | `codex update` özel kodu bozar | `codex update` normal şekilde çalışır |
-| Karmaşık kurulum | Tek komut: `npx codex-anywhere-proxy install` |
+| Karmaşık kurulum | İki komut: `npm i -g codex-anywhere-proxy` + `codex-proxy install` |
 
 ## Güncelleme
 
 ```bash
-npx codex-anywhere-proxy@latest install    # CLI ve proxy'yi güncelle
-codex update                          # Codex CLI'ı güncelle
+npm i -g codex-anywhere-proxy@latest
+codex-proxy install    # CLI ve proxy'yi güncelle
+codex update           # Codex CLI'ı güncelle
 ```
 
 ## Platform desteği

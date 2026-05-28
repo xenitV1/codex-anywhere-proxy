@@ -28,7 +28,7 @@ letting you use Codex with any provider that speaks OpenAI's API format.
 ## Features
 
 - **Any provider** — Works with any OpenAI chat/completions compatible API
-- **Interactive setup** — `npx codex-anywhere-proxy install` guides you through provider, API key, and model selection
+- **Interactive setup** — `codex-proxy install` guides you through provider, API key, and model selection
 - **Provider-aware model catalog** — Auto-detects your provider and shows only its models (prevents sub-agent model errors)
 - **CLI management** — `start`, `stop`, `restart`, `status`, `config`, `models`, `logs` commands
 - **Streaming** — Full SSE streaming with real-time token output
@@ -46,7 +46,8 @@ letting you use Codex with any provider that speaks OpenAI's API format.
 ## Quick start
 
 ```bash
-npx codex-anywhere-proxy install
+npm i -g codex-anywhere-proxy
+codex-proxy install
 ```
 
 That's it. The CLI will:
@@ -67,7 +68,7 @@ codex
 ## CLI commands
 
 ```bash
-npx codex-anywhere-proxy install    # First-time setup (interactive)
+codex-proxy install    # First-time setup (interactive)
 codex-proxy config     # Change provider, API key, or model
 codex-proxy start      # Start the proxy
 codex-proxy stop       # Stop the proxy
@@ -78,14 +79,13 @@ codex-proxy logs       # Tail proxy logs
 codex-proxy version    # Show version
 ```
 
-### Global install (optional)
+### Without global install
 
-If you install globally, you can drop the `npx`:
+If you prefer not to install globally, prefix commands with `npx`:
 
 ```bash
-npm i -g codex-anywhere-proxy
-codex-proxy install
-codex-proxy status
+npx codex-anywhere-proxy install
+npx codex-anywhere-proxy status
 ```
 
 ## Supported providers
@@ -211,13 +211,14 @@ codex-proxy restart  # Restart
 | Merge conflicts on every update | Modular, works with any Codex version |
 | Need to maintain patches | Proxy is runtime-agnostic |
 | `codex update` breaks custom code | `codex update` works normally |
-| Complex setup | One command: `npx codex-anywhere-proxy install` |
+| Complex setup | Two commands: `npm i -g codex-anywhere-proxy` + `codex-proxy install` |
 
 ## Updating
 
 ```bash
-# Update CLI
-npx codex-anywhere-proxy@latest install
+# Update CLI and re-run setup (copies latest proxy files)
+npm i -g codex-anywhere-proxy@latest
+codex-proxy install
 
 # Update Codex CLI (proxy doesn't care)
 codex update
