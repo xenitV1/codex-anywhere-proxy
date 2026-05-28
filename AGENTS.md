@@ -154,7 +154,7 @@ Set `CODEX_PROXY_TEST=1` to let `.env` override config.toml (used by `test.ts`).
 
 - `[COLLAB]` logs when `debug=true`: request namespace map, each spawn_agent `output_item.added`/`done`, argument summary, stream summary
 - **Always-on warning** (no debug flag): `spawn_agent` emitted without `namespace` — explains Codex `unsupported call: spawn_agent`
-- Tail logs: `npx codex-anywhere-proxy logs` or `~/.codex-proxy/proxy.log`
+- Tail logs: `npx codex-anywhere-proxy logs` or `~/.codex-proxy/proxy.log` (CLI creates the file before systemd start; if missing, `logs` falls back to `journalctl -u codex-proxy`)
 
 ## Commit Conventions
 

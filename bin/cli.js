@@ -74,6 +74,27 @@ function formatModelDisplay(upstream, aliases) {
   return alias ? `${alias} → ${upstream}` : upstream;
 }
 
+/**
+ * Create ~/.codex-proxy/proxy.log if missing.
+ * systemd StandardOutput=append: does NOT create the file on many distros — logs
+ * go to journald only until the file exists.
+ */
+function ensureLogFile() {
+  if (!fs.existsSync(INSTALL_DIR)) fs.mkdirSync(INSTALL_DIR, { recursive: true });
+  if (!fs.existsSync(LOG_FILE)) {
+    fs.writeFileSync(LOG_FILE, "");
+  }
+}
+
+function isSystemdProxyActive() {
+  if (getPlatform() !== "linux") return false;
+  try {
+    return run("systemctl --user is-active codex-proxy", { silent: true }).trim() === "active";
+  } catch {
+    return false;
+  }
+}
+
 // ─── config.toml read/write ──────────────────────────────────────────
 function readConfig() {
   if (!fs.existsSync(CONFIG_FILE)) return {};
@@ -351,6 +372,7 @@ async function selectModels(models, preselected) {
 function syncProxyFiles() {
   const srcDir = getPackageDir();
   if (!fs.existsSync(INSTALL_DIR)) fs.mkdirSync(INSTALL_DIR, { recursive: true });
+  ensureLogFile();
 
   for (const [src, dest] of [["proxy.ts", "proxy.ts"], ["package.json", "package.json"]]) {
     const srcPath = path.join(srcDir, src);
@@ -481,6 +503,7 @@ async function cmdStart() {
 
   const bunPath = getBunPath();
   const port = getPort();
+  ensureLogFile();
 
   // Try systemctl first
   if (getPlatform() === "linux") {
@@ -489,6 +512,7 @@ async function cmdStart() {
       await new Promise((r) => setTimeout(r, 1500));
       if (await isProxyRunning()) {
         log("ok", `Proxy started (systemd, port ${port})`);
+        log("info", `Logs: ${LOG_FILE}`);
         return;
       }
     } catch {}
@@ -713,20 +737,48 @@ async function cmdModels() {
 }
 
 async function cmdLogs() {
-  if (!fs.existsSync(LOG_FILE)) {
-    log("warn", "No log file found. Proxy may not have been started yet.");
+  const hasLogFile = fs.existsSync(LOG_FILE);
+  const logSize = hasLogFile ? fs.statSync(LOG_FILE).size : 0;
+
+  if (hasLogFile && logSize > 0) {
+    try {
+      if (getPlatform() === "windows") {
+        run(`type ${LOG_FILE}`);
+      } else {
+        execFileSync("tail", ["-n", "50", "-f", LOG_FILE], { stdio: "inherit" });
+      }
+    } catch {
+      // tail interrupted (Ctrl+C)
+    }
     return;
   }
 
-  try {
-    if (getPlatform() === "windows") {
-      run(`type ${LOG_FILE}`);
-    } else {
-      execFileSync("tail", ["-n", "50", "-f", LOG_FILE], { stdio: "inherit" });
+  // Proxy running via systemd but append: never created the file — logs are in journald
+  if (isSystemdProxyActive()) {
+    log("warn", `Log file empty or missing: ${LOG_FILE}`);
+    log("info", "Proxy is running (systemd). Showing journalctl instead.");
+    log("info", "Fix permanently: codex-proxy restart (creates proxy.log on start)");
+    try {
+      execFileSync(
+        "journalctl",
+        ["--user", "-u", "codex-proxy", "-n", "80", "-f", "--no-pager"],
+        { stdio: "inherit" },
+      );
+    } catch {
+      // journalctl interrupted
     }
-  } catch {
-    // tail was interrupted (Ctrl+C)
+    return;
   }
+
+  if (hasLogFile && logSize === 0) {
+    log("warn", `Log file exists but is empty: ${LOG_FILE}`);
+    log("info", "Restart proxy after enabling debug in config.toml: codex-proxy restart");
+    return;
+  }
+
+  log("warn", "No log file found. Proxy may not have been started yet.");
+  log("info", `Expected: ${LOG_FILE}`);
+  log("info", "Start: codex-proxy start");
 }
 
 function cmdVersion() {
@@ -1136,6 +1188,7 @@ function configureCodex(config) {
 }
 
 function setupService(bunPath, platform) {
+  ensureLogFile();
   if (platform === "linux") {
     const serviceDir = path.join(os.homedir(), ".config", "systemd", "user");
     if (!fs.existsSync(serviceDir)) fs.mkdirSync(serviceDir, { recursive: true });
