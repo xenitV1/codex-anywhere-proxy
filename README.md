@@ -134,20 +134,7 @@ The proxy fetches model metadata from [models.dev](https://models.dev) (2478+ mo
 
 **Auto-detection (default):** The proxy matches your `upstream` URL against models.dev provider URLs and shows only that provider's models. No configuration needed.
 
-**Custom models:** If your model isn't in models.dev, add a `MODELS_JSON` env var pointing to a JSON file:
-
-```json
-{
-  "my-custom-model": {
-    "context_window": 128000,
-    "max_output": 8192,
-    "reasoning": false,
-    "tool_call": true
-  }
-}
-```
-
-**Custom models:** If your model isn't in models.dev, create a JSON file:
+**Custom models:** If your model isn't in models.dev, set `MODELS_JSON` in `~/.codex-proxy/config.toml` or as an env var pointing to a JSON file:
 
 ```env
 MODELS_JSON=/path/to/my-models.json
