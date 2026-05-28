@@ -12,6 +12,7 @@ import { updateSessionUsage } from "./session.js";
 import { responsesInputToChatMessages, responsesToolsToChatTools, chatToResponses } from "./converters.js";
 import { streamChatToResponses } from "./streaming.js";
 import { proxyLog } from "./debug.js";
+import { logCollabToolsRequest, logCollabNonStreamResponse } from "./collab-debug.js";
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -37,7 +38,7 @@ export async function handleResponsesRequest(
   const apiKey = authHeader.replace("Bearer ", "") || KEY;
 
   const chatMessages = responsesInputToChatMessages(body);
-  const tools = responsesToolsToChatTools(body.tools, FILTER_NON_FUNCTION_TOOLS);
+  const { tools, toolNamespaces } = responsesToolsToChatTools(body.tools, FILTER_NON_FUNCTION_TOOLS);
   const requestedModel = body.model || "default";
   const stream = body.stream !== false;
 
@@ -69,9 +70,11 @@ export async function handleResponsesRequest(
     `[PROXY] +0ms model=${model} msgs=${chatMessages.length} ` +
     `tools=${tools?.length || 0} stream=${stream}`,
   );
+  const flatToolNames = tools?.map((t) => t.function?.name || t.name).filter(Boolean) as string[] || [];
   if (tools?.length) {
-    proxyLog(`[TOOLS] ${tools.map(t => t.function?.name || t.name).join(", ")}`);
+    proxyLog(`[TOOLS] ${flatToolNames.join(", ")}`);
   }
+  logCollabToolsRequest(body.tools, toolNamespaces, flatToolNames);
   const info = getModelInfo(model);
   if (info) {
     const compactAt = Math.floor(info.context_window * 0.9);
@@ -106,7 +109,8 @@ export async function handleResponsesRequest(
 
   if (!stream) {
     const chatResult = await upstreamResp.json();
-    const resp = chatToResponses(chatResult);
+    const resp = chatToResponses(chatResult, toolNamespaces);
+    logCollabNonStreamResponse(chatResult, toolNamespaces, Date.now() - startedAt);
     updateSessionUsage(chatResult.usage, model);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(resp));
@@ -116,6 +120,7 @@ export async function handleResponsesRequest(
   streamChatToResponses(upstreamResp, res, model, {
     isReasoning: info?.reasoning ?? false,
     startedAt,
+    toolNamespaces,
   });
 }
 

@@ -7,6 +7,7 @@
 import type { ServerResponse } from "http";
 import { updateSessionUsage, sessionUsage } from "./session.js";
 import { proxyLog, DEBUG } from "./debug.js";
+import { logCollabFunctionCall, logCollabToolsSummary } from "./collab-debug.js";
 
 function sse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -27,6 +28,8 @@ export interface StreamOptions {
   isReasoning?: boolean;
   /** Request start time (performance logging) */
   startedAt?: number;
+  /** Flattened tool name → Responses API namespace (from namespace tool defs). */
+  toolNamespaces?: Record<string, string>;
 }
 
 export function streamChatToResponses(
@@ -37,6 +40,7 @@ export function streamChatToResponses(
 ) {
   const startedAt = options.startedAt ?? Date.now();
   const isReasoning = options.isReasoning ?? false;
+  const toolNamespaces = options.toolNamespaces ?? {};
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -137,6 +141,19 @@ export function streamChatToResponses(
     return toolCalls.get(idx)!;
   }
 
+  function functionCallItem(state: ToolCallState, extra: Record<string, unknown> = {}) {
+    const item: Record<string, unknown> = {
+      type: "function_call",
+      id: state.fcItemId,
+      call_id: state.id,
+      name: state.name,
+      ...extra,
+    };
+    const namespace = toolNamespaces[state.name];
+    if (namespace) item.namespace = namespace;
+    return item;
+  }
+
   function ensureToolAdded(state: ToolCallState) {
     if (state.added || !state.name) return;
     state.added = true;
@@ -145,17 +162,20 @@ export function streamChatToResponses(
       type: "response.output_item.added",
       output_index: state.outputIndex,
       item: {
-        type: "function_call",
-        id: state.fcItemId,
-        call_id: state.id,
-        name: state.name,
-        arguments: "",
-        status: "in_progress",
+        ...functionCallItem(state, { arguments: "", status: "in_progress" }),
       },
     }));
-    proxyLog(
-      `[PROXY] +${Date.now() - startedAt}ms tool added: ${state.name} idx=${state.outputIndex}`,
-    );
+    const elapsed = Date.now() - startedAt;
+    proxyLog(`[PROXY] +${elapsed}ms tool added: ${state.name} idx=${state.outputIndex}`);
+    logCollabFunctionCall({
+      phase: "added",
+      elapsedMs: elapsed,
+      name: state.name,
+      callId: state.id,
+      fcItemId: state.fcItemId,
+      outputIndex: state.outputIndex,
+      namespace: toolNamespaces[state.name],
+    });
   }
 
   function finalizeTool(state: ToolCallState) {
@@ -163,21 +183,27 @@ export function streamChatToResponses(
     if (!state.added && state.name) ensureToolAdded(state);
     if (!state.added) return;
     state.done = true;
+    const item = functionCallItem(state, { arguments: state.arguments, status: "completed" });
     res.write(sse("response.output_item.done", {
       type: "response.output_item.done",
       output_index: state.outputIndex,
-      item: {
-        type: "function_call",
-        id: state.fcItemId,
-        call_id: state.id,
-        name: state.name,
-        arguments: state.arguments,
-        status: "completed",
-      },
+      item,
     }));
-    proxyLog(
-      `[PROXY] +${Date.now() - startedAt}ms tool done: ${state.name}`,
-    );
+    const elapsed = Date.now() - startedAt;
+    proxyLog(`[PROXY] +${elapsed}ms tool done: ${state.name}`);
+    logCollabFunctionCall({
+      phase: "done",
+      elapsedMs: elapsed,
+      name: state.name,
+      callId: state.id,
+      fcItemId: state.fcItemId,
+      outputIndex: state.outputIndex,
+      namespace: toolNamespaces[state.name],
+      arguments: state.arguments,
+    });
+    if (DEBUG && state.name) {
+      proxyLog(`[COLLAB]   output_item.done item: ${JSON.stringify(item)}`);
+    }
   }
 
   function finalizeAllTools() {
@@ -202,6 +228,16 @@ export function streamChatToResponses(
     }
 
     finalizeAllTools();
+    logCollabToolsSummary(
+      Date.now() - startedAt,
+      [...toolCalls.values()].map((t) => ({
+        name: t.name,
+        id: t.id,
+        done: t.done,
+        arguments: t.arguments,
+      })),
+      toolNamespaces,
+    );
     updateSessionUsage(usage, model);
 
     const inputTokens = usage?.prompt_tokens || 0;
@@ -225,12 +261,7 @@ export function streamChatToResponses(
             status: "completed",
           }] : []),
           ...[...toolCalls.values()].filter(t => t.done).map((tc) => ({
-            type: "function_call",
-            id: tc.fcItemId,
-            call_id: tc.id,
-            name: tc.name,
-            arguments: tc.arguments,
-            status: "completed",
+            ...functionCallItem(tc, { arguments: tc.arguments, status: "completed" }),
           })),
         ],
         usage: {

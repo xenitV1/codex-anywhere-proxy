@@ -1,6 +1,6 @@
 {
   "name": "codex-anywhere-proxy",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "description": "Use Codex CLI with any OpenAI-compatible API provider. No OpenAI account needed. No fork needed.",
   "keywords": [
     "codex",

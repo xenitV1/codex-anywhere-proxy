@@ -12,6 +12,7 @@
  */
 
 import { PROXY_URL, MODEL, API_KEY, assert, assertEqual, skip, responsesRequest } from "./helpers.js";
+import { responsesToolsToChatTools, chatToResponses } from "../src/converters.js";
 
 export async function run() {
   // ─── Codex Model Catalog Format ────────────────────────────────
@@ -57,8 +58,51 @@ export async function run() {
     }
   }
 
+  // ─── Namespace round-trip for Codex dispatch ───────────────────
+  console.log("\nTest 3: Namespace tools preserve namespace on function_call output");
+  {
+    const { toolNamespaces } = responsesToolsToChatTools(
+      [
+        {
+          type: "namespace",
+          name: "multi_agent_v1",
+          description: "Sub-agents",
+          tools: [
+            {
+              type: "function",
+              name: "spawn_agent",
+              description: "Spawn a sub-agent",
+              parameters: { type: "object", properties: { message: { type: "string" } } },
+            },
+          ],
+        },
+      ],
+      true,
+    );
+    assertEqual(toolNamespaces.spawn_agent, "multi_agent_v1", "spawn_agent maps to multi_agent_v1");
+
+    const resp = chatToResponses(
+      {
+        choices: [{
+          message: {
+            tool_calls: [{
+              id: "call_test",
+              type: "function",
+              function: { name: "spawn_agent", arguments: "{\"message\":\"hi\"}" },
+            }],
+          },
+        }],
+      },
+      toolNamespaces,
+    );
+    const fc = resp.output.find((o: any) => o.type === "function_call");
+    assert(!!fc, "function_call in output");
+    assertEqual(fc.namespace, "multi_agent_v1", "function_call includes namespace for Codex registry");
+    assertEqual(fc.name, "spawn_agent", "function_call name preserved");
+  }
+
   // ─── Namespace Tool Type Handling ──────────────────────────────
-  console.log("\nTest 3: Namespace tool type (MCP grouped tools)");
+  console.log("\nTest 4: Namespace tool type (MCP grouped tools)");
   {
     if (!API_KEY) { skip("No API key — skipping namespace tool test"); }
     else {
@@ -83,7 +127,7 @@ export async function run() {
   }
 
   // ─── Mixed Tool Types ──────────────────────────────────────────
-  console.log("\nTest 4: Mixed tool types (web_search + function + custom)");
+  console.log("\nTest 5: Mixed tool types (web_search + function + custom)");
   {
     if (!API_KEY) { skip("No API key — skipping mixed tool test"); }
     else {
@@ -106,7 +150,7 @@ export async function run() {
   }
 
   // ─── Codex Headers Pass-Through ────────────────────────────────
-  console.log("\nTest 5: Codex-specific headers are handled");
+  console.log("\nTest 6: Codex-specific headers are handled");
   {
     if (!API_KEY) { skip("No API key — skipping header test"); }
     else {

@@ -79,8 +79,20 @@ const CODEX_LOCAL_TOOLS = new Set([
   "list_agents",
 ]);
 
-export function responsesToolsToChatTools(tools: any[] | undefined, filterNonFunction: boolean): any[] | undefined {
-  if (!tools || tools.length === 0) return undefined;
+export interface ChatToolsConversion {
+  tools: any[] | undefined;
+  /** Maps flattened tool name → Responses API namespace (e.g. spawn_agent → multi_agent_v1). */
+  toolNamespaces: Record<string, string>;
+}
+
+export function responsesToolsToChatTools(
+  tools: any[] | undefined,
+  filterNonFunction: boolean,
+): ChatToolsConversion {
+  const toolNamespaces: Record<string, string> = {};
+  if (!tools || tools.length === 0) {
+    return { tools: undefined, toolNamespaces };
+  }
 
   const result: any[] = [];
 
@@ -135,14 +147,20 @@ export function responsesToolsToChatTools(tools: any[] | undefined, filterNonFun
       continue;
     }
 
-    // Namespace tool (MCP grouped tools) → flatten to individual functions
+    // Namespace tool (MCP, multi_agent_v1, etc.) → flatten for chat/completions but
+    // remember namespace so function_call items can be round-tripped to Codex.
     if (type === "namespace" && Array.isArray(t.tools)) {
+      const namespace = t.name;
       for (const subTool of t.tools) {
         if (subTool.type === "function" || !subTool.type) {
+          const subName = subTool.name;
+          if (namespace && subName) {
+            toolNamespaces[subName] = namespace;
+          }
           result.push({
             type: "function",
             function: {
-              name: subTool.name,
+              name: subName,
               description: subTool.description || t.description || "",
               parameters: subTool.parameters || { type: "object", properties: {} },
             },
@@ -168,10 +186,16 @@ export function responsesToolsToChatTools(tools: any[] | undefined, filterNonFun
     // When filterNonFunction is true (default), these are silently dropped
   }
 
-  return result.length > 0 ? result : undefined;
+  return {
+    tools: result.length > 0 ? result : undefined,
+    toolNamespaces,
+  };
 }
 
-export function chatToResponses(chatResult: Record<string, any>): Record<string, any> {
+export function chatToResponses(
+  chatResult: Record<string, any>,
+  toolNamespaces: Record<string, string> = {},
+): Record<string, any> {
   const msg = chatResult.choices?.[0]?.message;
   const output: any[] = [];
   if (msg?.content) {
@@ -179,7 +203,17 @@ export function chatToResponses(chatResult: Record<string, any>): Record<string,
   }
   if (msg?.tool_calls) {
     for (const tc of msg.tool_calls) {
-      output.push({ type: "function_call", id: tc.id, call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments });
+      const name = tc.function.name;
+      const item: Record<string, any> = {
+        type: "function_call",
+        id: tc.id,
+        call_id: tc.id,
+        name,
+        arguments: tc.function.arguments,
+      };
+      const namespace = toolNamespaces[name];
+      if (namespace) item.namespace = namespace;
+      output.push(item);
     }
   }
   const inputTokens = chatResult.usage?.prompt_tokens || 0;

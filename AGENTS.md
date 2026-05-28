@@ -31,7 +31,8 @@ bin/
 src/
   config.ts           (~190 lines)  Loads config.toml + .env; CODEX_PROXY_TEST=1 for test isolation
   converters.ts       (~200 lines)  Responses API <-> Chat Completions format converters
-  debug.ts            (~12 lines)   Conditional logging (config.toml debug=true, DEBUG=1, CODEX_PROXY_DEBUG=1)
+  debug.ts            (~17 lines)   Debug logging gate (config.toml debug=true, DEBUG=1, CODEX_PROXY_DEBUG=1)
+  collab-debug.ts     (~220 lines)  spawn_agent / collab diagnostics ([COLLAB] logs, namespace warnings)
   handler.ts          (~120 lines)  POST /v1/responses handler — main proxy logic
   models.ts           (~280 lines)  Model catalog from models.dev + builtin fallback + MODELS_EXCLUDE
   routes.ts           (~245 lines)  HTTP route handlers (health, stats, models, context, pass-through)
@@ -94,7 +95,7 @@ The proxy handles 7 tool types that Codex may send:
 |------|--------|--------|
 | `function` | Pass through | Standard, all providers support |
 | `custom` (e.g. apply_patch) | Convert to function with string param | Codex built-in, no chat/completions equivalent |
-| `namespace` (MCP) | Flatten sub-tools to individual functions | Grouped tools, providers expect flat list |
+| `namespace` (MCP, `multi_agent_v1`) | Flatten sub-tools for upstream; restore `namespace` on `function_call` output | Chat APIs need flat tools; Codex registry keys are namespaced |
 | `web_search` | Filter out (when FILTER_NON_FUNCTION_TOOLS=true) | OpenAI-only built-in |
 | `image_generation` | Filter out | OpenAI-only built-in |
 | `local_shell` | Filter out | Codex-only, handled client-side |
@@ -148,6 +149,12 @@ Set `CODEX_PROXY_TEST=1` to let `.env` override config.toml (used by `test.ts`).
 - Reasoning models: synthetic `reasoning` output item + passthrough of `reasoning_content` deltas
 - Tool calls: `output_item.added` on first chunk, `output_item.done` on `finish_reason: tool_calls` (not stream end)
 - Verbose timing logs when `debug = true` in `~/.codex-proxy/config.toml`, or `DEBUG=1` / `CODEX_PROXY_DEBUG=1`
+
+### Collab / spawn_agent debug (`src/collab-debug.ts`)
+
+- `[COLLAB]` logs when `debug=true`: request namespace map, each spawn_agent `output_item.added`/`done`, argument summary, stream summary
+- **Always-on warning** (no debug flag): `spawn_agent` emitted without `namespace` — explains Codex `unsupported call: spawn_agent`
+- Tail logs: `npx codex-anywhere-proxy logs` or `~/.codex-proxy/proxy.log`
 
 ## Commit Conventions
 
