@@ -100,8 +100,13 @@ export function responsesToolsToChatTools(tools: any[] | undefined, filterNonFun
       if (CODEX_AGENT_TOOLS.has(t.name) && fnDef.parameters?.properties) {
         delete fnDef.parameters.properties.model;
         if (fnDef.parameters.required) {
-          fnDef.parameters.required = fnDef.parameters.required.filter(r => r !== "model");
+          fnDef.parameters.required = fnDef.parameters.required.filter((r: string) => r !== "model");
         }
+      }
+
+      // Strip output_schema from Codex-local agent tools — non-OpenAI providers reject it.
+      if (CODEX_LOCAL_TOOLS.has(t.name)) {
+        delete fnDef.output_schema;
       }
 
       result.push({

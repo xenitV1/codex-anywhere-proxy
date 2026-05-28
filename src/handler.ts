@@ -6,11 +6,12 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { UPSTREAM, KEY, FILTER_NON_FUNCTION_TOOLS, ACTIVE_MODEL, AVAILABLE_MODELS, MODEL_ALIASES, resolveModel } from "./config.js";
+import { UPSTREAM, KEY, FILTER_NON_FUNCTION_TOOLS, ACTIVE_MODEL, AVAILABLE_MODELS, resolveModel } from "./config.js";
 import { getModelInfo } from "./models.js";
 import { updateSessionUsage } from "./session.js";
 import { responsesInputToChatMessages, responsesToolsToChatTools, chatToResponses } from "./converters.js";
 import { streamChatToResponses } from "./streaming.js";
+import { proxyLog } from "./debug.js";
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -22,7 +23,16 @@ export async function handleResponsesRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ) {
-  const body = JSON.parse(await readBody(req));
+  const startedAt = Date.now();
+  let body: Record<string, any>;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "Invalid JSON body" } }));
+    return;
+  }
+
   const authHeader = req.headers.authorization || "";
   const apiKey = authHeader.replace("Bearer ", "") || KEY;
 
@@ -31,24 +41,19 @@ export async function handleResponsesRequest(
   const requestedModel = body.model || "default";
   const stream = body.stream !== false;
 
-  // ── Model mapping ──
-  // All model names must be resolved to upstream names before sending.
-  // Alias names (e.g. "gpt-5.4") map to upstream names (e.g. "glm-5.1").
-  // Unknown Codex models (e.g. "gpt-5.5" sent by spawn_agent) fall back to ACTIVE_MODEL.
   const activeUpstream = resolveModel(ACTIVE_MODEL) || ACTIVE_MODEL;
   let model = resolveModel(requestedModel);
   if (!model || model === requestedModel) {
-    // Not an alias — check if it's a known upstream model
     const available = AVAILABLE_MODELS.length > 0 ? AVAILABLE_MODELS : [ACTIVE_MODEL];
     const allUpstream = available.map(m => resolveModel(m) || m);
     if (!allUpstream.includes(requestedModel) && activeUpstream) {
-      console.log(`[MODEL] Mapping unknown model "${requestedModel}" → "${activeUpstream}"`);
+      proxyLog(`[MODEL] Mapping unknown model "${requestedModel}" → "${activeUpstream}"`);
       model = activeUpstream;
     } else {
       model = requestedModel;
     }
   } else {
-    console.log(`[ALIAS] "${requestedModel}" → "${model}"`);
+    proxyLog(`[ALIAS] "${requestedModel}" → "${model}"`);
   }
 
   const chatRequest: Record<string, unknown> = {
@@ -60,27 +65,25 @@ export async function handleResponsesRequest(
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
   };
 
-  console.log(
-    `[PROXY] model=${model} msgs=${chatMessages.length} ` +
-    `tools=${tools?.length || 0} stream=${stream}`
+  proxyLog(
+    `[PROXY] +0ms model=${model} msgs=${chatMessages.length} ` +
+    `tools=${tools?.length || 0} stream=${stream}`,
   );
   if (tools?.length) {
-    console.log(`[TOOLS] ${tools.map(t => t.function?.name || t.name).join(", ")}`);
+    proxyLog(`[TOOLS] ${tools.map(t => t.function?.name || t.name).join(", ")}`);
   }
   const info = getModelInfo(model);
   if (info) {
     const compactAt = Math.floor(info.context_window * 0.9);
-    console.log(
+    proxyLog(
       `[MODEL] ${model}: context=${formatTokens(info.context_window)} ` +
       `output=${formatTokens(info.max_output)} compact_at=${formatTokens(compactAt)} ` +
-      `reasoning=${info.reasoning} tool_call=${info.tool_call}`
+      `reasoning=${info.reasoning} tool_call=${info.tool_call}`,
     );
   } else {
-    console.log(`[MODEL] ${model}: unknown — add to models.dev or MODELS_JSON`);
+    proxyLog(`[MODEL] ${model}: unknown — add to models.dev or MODELS_JSON`);
   }
 
-  // Strip Codex-specific headers that upstream providers won't understand.
-  // Codex sends these to OpenAI; non-OpenAI providers may reject them.
   const upstreamHeaders: Record<string, string> = {
     "Content-Type": "application/json",
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -90,6 +93,8 @@ export async function handleResponsesRequest(
     `${UPSTREAM.replace(/\/$/, "")}/chat/completions`,
     { method: "POST", headers: upstreamHeaders, body: JSON.stringify(chatRequest) },
   );
+
+  proxyLog(`[PROXY] +${Date.now() - startedAt}ms upstream connected status=${upstreamResp.status}`);
 
   if (!upstreamResp.ok) {
     const errText = await upstreamResp.text();
@@ -108,7 +113,10 @@ export async function handleResponsesRequest(
     return;
   }
 
-  streamChatToResponses(upstreamResp, res, model);
+  streamChatToResponses(upstreamResp, res, model, {
+    isReasoning: info?.reasoning ?? false,
+    startedAt,
+  });
 }
 
 export function readBody(req: IncomingMessage): Promise<string> {
@@ -117,5 +125,5 @@ export function readBody(req: IncomingMessage): Promise<string> {
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     req.on("error", reject);
- });
+  });
 }

@@ -6,16 +6,38 @@
 
 import type { ServerResponse } from "http";
 import { updateSessionUsage, sessionUsage } from "./session.js";
+import { proxyLog, DEBUG } from "./debug.js";
 
 function sse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+interface ToolCallState {
+  id: string;
+  name: string;
+  arguments: string;
+  fcItemId: string;
+  outputIndex: number;
+  added: boolean;
+  done: boolean;
+}
+
+export interface StreamOptions {
+  /** Model supports reasoning — emit synthetic reasoning item while waiting */
+  isReasoning?: boolean;
+  /** Request start time (performance logging) */
+  startedAt?: number;
 }
 
 export function streamChatToResponses(
   upstreamResp: Response,
   res: ServerResponse,
   model: string,
+  options: StreamOptions = {},
 ) {
+  const startedAt = options.startedAt ?? Date.now();
+  const isReasoning = options.isReasoning ?? false;
+
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -24,47 +46,151 @@ export function streamChatToResponses(
 
   const respId = `resp_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const itemId = `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
-  const fcBaseId = `fc_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const reasoningItemId = `rs_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
-  let sentCreated = false;
+  // Send response.created immediately — don't wait for upstream first byte
+  res.write(sse("response.created", {
+    type: "response.created",
+    response: { id: respId, object: "response", status: "in_progress", model, output: [] },
+  }));
+  proxyLog(`[PROXY] +${Date.now() - startedAt}ms response.created sent`);
+
+  let nextOutputIndex = 0;
+  let reasoningOpen = false;
+  let reasoningClosed = false;
+  let reasoningOutputIndex = -1;
+
   let sentItemAdded = false;
+  let messageOutputIndex = -1;
   let textContent = "";
   let usage: Record<string, any> | null = null;
-  const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
-  let outputIndex = 0;
+  const toolCalls = new Map<number, ToolCallState>();
 
-  function ensureCreated() {
-    if (!sentCreated) {
-      sentCreated = true;
-      res.write(sse("response.created", {
-        type: "response.created",
-        response: { id: respId, object: "response", status: "in_progress", model, output: [] },
-      }));
-    }
+  let firstByteLogged = false;
+
+  function openReasoningItem() {
+    if (!isReasoning || reasoningOpen || reasoningClosed) return;
+    reasoningOpen = true;
+    reasoningOutputIndex = nextOutputIndex++;
+    res.write(sse("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: reasoningOutputIndex,
+      item: {
+        type: "reasoning",
+        id: reasoningItemId,
+        summary: [],
+        status: "in_progress",
+      },
+    }));
+    proxyLog(`[PROXY] +${Date.now() - startedAt}ms reasoning item opened`);
   }
 
-  function ensureItemAdded() {
-    if (!sentItemAdded) {
-      sentItemAdded = true;
-      res.write(sse("response.output_item.added", {
-        type: "response.output_item.added",
-        output_index: outputIndex,
-        item: { type: "message", id: itemId, role: "assistant", content: [], status: "in_progress" },
-      }));
-      res.write(sse("response.content_part.added", {
-        type: "response.content_part.added",
-        output_index: outputIndex,
-        content_index: 0,
-        part: { type: "output_text", text: "" },
-      }));
+  function closeReasoningItem() {
+    if (!reasoningOpen || reasoningClosed) return;
+    reasoningClosed = true;
+    reasoningOpen = false;
+    res.write(sse("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: reasoningOutputIndex,
+      item: {
+        type: "reasoning",
+        id: reasoningItemId,
+        summary: [{ type: "summary_text", text: "" }],
+        status: "completed",
+      },
+    }));
+  }
+
+  // Synthetic reasoning indicator for models that think before responding
+  if (isReasoning) openReasoningItem();
+
+  function ensureMessageItem() {
+    closeReasoningItem();
+    if (sentItemAdded) return;
+    sentItemAdded = true;
+    messageOutputIndex = nextOutputIndex++;
+    res.write(sse("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: messageOutputIndex,
+      item: { type: "message", id: itemId, role: "assistant", content: [], status: "in_progress" },
+    }));
+    res.write(sse("response.content_part.added", {
+      type: "response.content_part.added",
+      output_index: messageOutputIndex,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    }));
+  }
+
+  function getOrCreateTool(idx: number): ToolCallState {
+    if (!toolCalls.has(idx)) {
+      toolCalls.set(idx, {
+        id: `call_${idx}`,
+        name: "",
+        arguments: "",
+        fcItemId: `fc_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}_${idx}`,
+        outputIndex: nextOutputIndex++,
+        added: false,
+        done: false,
+      });
     }
+    return toolCalls.get(idx)!;
+  }
+
+  function ensureToolAdded(state: ToolCallState) {
+    if (state.added || !state.name) return;
+    state.added = true;
+    closeReasoningItem();
+    res.write(sse("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: state.outputIndex,
+      item: {
+        type: "function_call",
+        id: state.fcItemId,
+        call_id: state.id,
+        name: state.name,
+        arguments: "",
+        status: "in_progress",
+      },
+    }));
+    proxyLog(
+      `[PROXY] +${Date.now() - startedAt}ms tool added: ${state.name} idx=${state.outputIndex}`,
+    );
+  }
+
+  function finalizeTool(state: ToolCallState) {
+    if (state.done) return;
+    if (!state.added && state.name) ensureToolAdded(state);
+    if (!state.added) return;
+    state.done = true;
+    res.write(sse("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: state.outputIndex,
+      item: {
+        type: "function_call",
+        id: state.fcItemId,
+        call_id: state.id,
+        name: state.name,
+        arguments: state.arguments,
+        status: "completed",
+      },
+    }));
+    proxyLog(
+      `[PROXY] +${Date.now() - startedAt}ms tool done: ${state.name}`,
+    );
+  }
+
+  function finalizeAllTools() {
+    for (const state of toolCalls.values()) finalizeTool(state);
   }
 
   function sendCompletion() {
+    closeReasoningItem();
+
     if (sentItemAdded) {
       res.write(sse("response.output_item.done", {
         type: "response.output_item.done",
-        output_index: outputIndex,
+        output_index: messageOutputIndex,
         item: {
           type: "message",
           id: itemId,
@@ -75,35 +201,7 @@ export function streamChatToResponses(
       }));
     }
 
-    const toolBaseIndex = outputIndex + (textContent ? 1 : 0);
-    for (const [idx, tc] of toolCalls) {
-      const toolIndex = toolBaseIndex + idx;
-      res.write(sse("response.output_item.added", {
-        type: "response.output_item.added",
-        output_index: toolIndex,
-        item: {
-          type: "function_call",
-          id: `${fcBaseId}_${idx}`,
-          call_id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments,
-          status: "in_progress",
-        },
-      }));
-      res.write(sse("response.output_item.done", {
-        type: "response.output_item.done",
-        output_index: toolIndex,
-        item: {
-          type: "function_call",
-          id: `${fcBaseId}_${idx}`,
-          call_id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments,
-          status: "completed",
-        },
-      }));
-    }
-
+    finalizeAllTools();
     updateSessionUsage(usage, model);
 
     const inputTokens = usage?.prompt_tokens || 0;
@@ -126,9 +224,9 @@ export function streamChatToResponses(
             content: [{ type: "output_text", text: textContent }],
             status: "completed",
           }] : []),
-          ...[...toolCalls.values()].map((tc, i) => ({
+          ...[...toolCalls.values()].filter(t => t.done).map((tc) => ({
             type: "function_call",
-            id: `${fcBaseId}_${i}`,
+            id: tc.fcItemId,
             call_id: tc.id,
             name: tc.name,
             arguments: tc.arguments,
@@ -144,17 +242,16 @@ export function streamChatToResponses(
       },
     }));
 
-    console.log(
-      `[PROXY] tokens: input=${inputTokens} output=${outputTokens} ` +
-      `(reasoning=${reasoningTokens}) total=${totalTokens} | ` +
-      `text=${textContent.length}chars tools=${toolCalls.size}`
+    proxyLog(
+      `[PROXY] +${Date.now() - startedAt}ms completed | ` +
+      `tokens in=${inputTokens} out=${outputTokens} tools=${toolCalls.size}`,
     );
-    console.log(
-      `[PROXY] Session: input=${sessionUsage.totalInputTokens} ` +
-      `output=${sessionUsage.totalOutputTokens} ` +
-      `reasoning=${sessionUsage.totalReasoningTokens} ` +
-      `requests=${sessionUsage.requestCount}`
-    );
+    if (DEBUG) {
+      console.log(
+        `[PROXY] Session: input=${sessionUsage.totalInputTokens} ` +
+        `output=${sessionUsage.totalOutputTokens} requests=${sessionUsage.requestCount}`,
+      );
+    }
   }
 
   const reader = upstreamResp.body!.getReader();
@@ -166,6 +263,11 @@ export function streamChatToResponses(
       while (true) {
         const { done, value } = await reader.read();
         if (done) { sendCompletion(); res.end(); return; }
+
+        if (!firstByteLogged) {
+          firstByteLogged = true;
+          proxyLog(`[PROXY] +${Date.now() - startedAt}ms first upstream byte`);
+        }
 
         sseBuffer += decoder.decode(value, { stream: true });
         const lines = sseBuffer.split("\n");
@@ -183,36 +285,47 @@ export function streamChatToResponses(
             if (!choice) continue;
 
             const delta = choice.delta || {};
-            ensureCreated();
+
+            // Upstream reasoning content (DeepSeek reasoner, some OpenAI-compatible)
+            if (delta.reasoning_content || delta.reasoning) {
+              if (reasoningOutputIndex < 0) openReasoningItem();
+              const rDelta = delta.reasoning_content || delta.reasoning || "";
+              res.write(sse("response.reasoning_text.delta", {
+                type: "response.reasoning_text.delta",
+                output_index: reasoningOutputIndex,
+                content_index: 0,
+                delta: rDelta,
+              }));
+            }
 
             if (delta.content) {
-              ensureItemAdded();
+              ensureMessageItem();
               textContent += delta.content;
               res.write(sse("response.output_text.delta", {
                 type: "response.output_text.delta",
-                output_index: outputIndex,
+                output_index: messageOutputIndex,
                 content_index: 0,
                 delta: delta.content,
               }));
             }
 
             if (delta.tool_calls) {
+              closeReasoningItem();
               for (const tc of delta.tool_calls) {
                 const idx = tc.index ?? 0;
-                if (!toolCalls.has(idx)) {
-                  toolCalls.set(idx, {
-                    id: tc.id || `call_${idx}`,
-                    name: "",
-                    arguments: "",
-                  });
-                }
-                const existing = toolCalls.get(idx)!;
-                if (tc.function?.name) existing.name = tc.function.name;
-                if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+                const state = getOrCreateTool(idx);
+                if (tc.id) state.id = tc.id;
+                if (tc.function?.name) state.name = tc.function.name;
+                if (tc.function?.arguments) state.arguments += tc.function.arguments;
+                ensureToolAdded(state);
               }
             }
+
+            if (choice.finish_reason === "tool_calls") {
+              finalizeAllTools();
+            }
           } catch {
-            // Skip malformed
+            // Skip malformed chunks
           }
         }
       }

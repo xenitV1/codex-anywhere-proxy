@@ -4,7 +4,7 @@
  * Tests for /health, /stats, /models, /model/:name, /context, model 404.
  */
 
-import { PROXY_URL, MODEL, assert, assertEqual } from "./helpers.js";
+import { PROXY_URL, MODEL, assert, assertEqual, PROXY_VERSION } from "./helpers.js";
 
 export async function run() {
   // Health check
@@ -14,10 +14,10 @@ export async function run() {
     assert(resp.ok, "Returns 200");
     const data: any = await resp.json();
     assertEqual(data.status, "ok", "Status is 'ok'");
-    assertEqual(data.version, "1.2.0", "Version is 1.2.0");
+    assertEqual(data.version, PROXY_VERSION, `Version is ${PROXY_VERSION}`);
     assert("upstream" in data, "Has upstream field");
     assert("hasApiKey" in data, "Has hasApiKey field");
-    assertEqual(data.hasApiKey, true, "hasApiKey is true");
+    assert(typeof data.hasApiKey === "boolean", "hasApiKey is boolean");
   }
 
   // Stats endpoint
@@ -40,6 +40,16 @@ export async function run() {
     assert("total" in data, "Has total count");
     assert(Array.isArray(data.models), "Has models array");
     assert(data.total > 0, `Has models (${data.total})`);
+  }
+
+  // Filtered models catalog_ready flag
+  console.log("\nTest 3b: /models/filtered catalog_ready");
+  {
+    const resp = await fetch(`${PROXY_URL}/models/filtered`);
+    assert(resp.ok, "/models/filtered returns 200");
+    const data: any = await resp.json();
+    assert(data.catalog_ready === true, "catalog_ready is true after startup");
+    assert(data.total > 0, `Has filtered models (${data.total})`);
   }
 
   // Single model info

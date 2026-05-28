@@ -18,7 +18,7 @@ import { run as runCodexCompat } from "./tests/codex-compat.test.js";
 // ─── Spawn test proxy on TEST_PORT ─────────────────────────────
 const testPort = parseInt(new URL(PROXY_URL).port, 10);
 const proxyProc = spawn("bun", ["run", "proxy.ts"], {
-  env: { ...process.env, PORT: String(testPort) },
+  env: { ...process.env, PORT: String(testPort), CODEX_PROXY_TEST: "1" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let proxyReady = false;

@@ -160,14 +160,30 @@ const tomlConfig = readTomlConfig();
 // Fall back to .env if config.toml has no values
 readEnvFallback();
 
+/** Test mode: .env overrides config.toml (set by test.ts) */
+const TEST_MODE = process.env.CODEX_PROXY_TEST === "1";
+
+function configOrEnv(tomlVal: string, envVal: string | undefined, fallback: string): string {
+  if (TEST_MODE && envVal) return envVal;
+  return tomlVal || envVal || fallback;
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────
 export const CONFIG_FILE_PATH = CONFIG_FILE;
-export const UPSTREAM = tomlConfig.upstream || process.env.UPSTREAM_BASE_URL || "https://openrouter.ai/api/v1";
-export const KEY = tomlConfig.apiKey || process.env.API_KEY || process.env.OPENAI_API_KEY || "";
+export const UPSTREAM = configOrEnv(
+  tomlConfig.upstream,
+  process.env.UPSTREAM_BASE_URL,
+  "https://openrouter.ai/api/v1",
+);
+export const KEY = configOrEnv(
+  tomlConfig.apiKey,
+  process.env.API_KEY || process.env.OPENAI_API_KEY,
+  "",
+);
 export const PORT = parseInt(process.env.PORT || String(tomlConfig.port), 10) || 8765;
 export const FILTER_NON_FUNCTION_TOOLS = tomlConfig.filterNonFunctionTools;
-export const MODELS_FILTER = tomlConfig.modelsFilter || process.env.MODELS_FILTER || "";
-export const MODELS_EXCLUDE = tomlConfig.modelsExclude || process.env.MODELS_EXCLUDE || "";
+export const MODELS_FILTER = configOrEnv(tomlConfig.modelsFilter, process.env.MODELS_FILTER, "");
+export const MODELS_EXCLUDE = configOrEnv(tomlConfig.modelsExclude, process.env.MODELS_EXCLUDE, "");
 export const AVAILABLE_MODELS = tomlConfig.availableModels;
 export const ACTIVE_MODEL = tomlConfig.activeModel;
 export const CONTEXT_WINDOW = tomlConfig.contextWindow;

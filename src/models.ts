@@ -12,7 +12,7 @@
  */
 
 import { readFileSync, existsSync } from "fs";
-import { UPSTREAM as CONFIG_UPSTREAM } from "./config.js";
+import { UPSTREAM as CONFIG_UPSTREAM, MODELS_FILTER, MODELS_EXCLUDE } from "./config.js";
 
 export interface ModelInfo {
   context_window: number;
@@ -99,8 +99,8 @@ function filterModels(
   providerIds: string[],
   providerModels: Record<string, string[]>,
 ): Record<string, ModelInfo> {
-  const modelsFilter = process.env.MODELS_FILTER;
-  const modelsExclude = process.env.MODELS_EXCLUDE;
+  const modelsFilter = MODELS_FILTER;
+  const modelsExclude = MODELS_EXCLUDE;
 
   // MODELS_FILTER: comma-separated allowlist of model name substrings
   if (modelsFilter) {
@@ -228,7 +228,7 @@ async function fetchModelsDev(): Promise<void> {
 
     const filterInfo = providerIds.length > 0
       ? `provider=${providerIds.join("+")}`
-      : (process.env.MODELS_FILTER ? `filter=${process.env.MODELS_FILTER}` : "all");
+      : (MODELS_FILTER ? `filter=${MODELS_FILTER}` : "all");
     const modelNames = Object.keys(filteredModels).sort();
     console.log(
       `[MODELS] Loaded ${modelNames.length} models ` +
@@ -275,21 +275,7 @@ export function getAllModelsUnfiltered(): Record<string, ModelInfo> {
   return modelsCache.allModels;
 }
 
-/**
- * Add alias models to a models map.
- * Each alias gets the same ModelInfo as its target upstream model.
- */
-export function addAliasModels(
-  models: Record<string, ModelInfo>,
-  aliases: Record<string, string>,
-): Record<string, ModelInfo> {
-  if (!aliases || Object.keys(aliases).length === 0) return models;
-  const result = { ...models };
-  for (const [alias, target] of Object.entries(aliases)) {
-    const targetInfo = result[target];
-    if (targetInfo) {
-      result[alias] = { ...targetInfo };
-    }
-  }
-  return result;
+/** True after models.dev fetch has completed at least once. */
+export function isCatalogReady(): boolean {
+  return modelsCache.fetchedAt > 0;
 }

@@ -12,7 +12,8 @@ let UPSTREAM_BASE_URL = "https://openrouter.ai/api/v1";
 export let API_KEY = "";
 let TEST_PORT = 8790;
 
-const envPath = join(dirname(import.meta.url.replace("file://", "")), "..", ".env");
+const projectRoot = join(dirname(import.meta.url.replace("file://", "")), "..");
+const envPath = join(projectRoot, ".env");
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, "utf-8").split("\n")) {
     const m = line.match(/^([^#=]+)=(.*)$/);
@@ -25,6 +26,12 @@ if (existsSync(envPath)) {
     }
   }
 }
+
+let PROXY_VERSION = "0.0.0";
+try {
+  PROXY_VERSION = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf-8")).version;
+} catch {}
+export { PROXY_VERSION };
 
 export const PROXY_URL = process.env.PROXY_URL || `http://localhost:${TEST_PORT}`;
 

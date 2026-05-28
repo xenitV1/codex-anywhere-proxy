@@ -60,6 +60,20 @@ function getBunPath() {
   catch { return path.join(os.homedir(), ".bun", "bin", "bun"); }
 }
 
+/** Reverse lookup: upstream model name → Codex alias (e.g. glm-5.1 → gpt-5.4) */
+function aliasForUpstream(upstream, aliases) {
+  if (!aliases) return null;
+  for (const [alias, target] of Object.entries(aliases)) {
+    if (target === upstream) return alias;
+  }
+  return null;
+}
+
+function formatModelDisplay(upstream, aliases) {
+  const alias = aliasForUpstream(upstream, aliases);
+  return alias ? `${alias} → ${upstream}` : upstream;
+}
+
 // ─── config.toml read/write ──────────────────────────────────────────
 function readConfig() {
   if (!fs.existsSync(CONFIG_FILE)) return {};
@@ -405,9 +419,7 @@ async function cmdInstall() {
   console.log(`║  ✓  Installation complete!                       ║`);
   console.log(`╚══════════════════════════════════════════════════╝${R}`);
   console.log("");
-  const displayModel = config.aliases?.[config.models.active]
-    ? `${config.models.active} → ${config.aliases[config.models.active]}`
-    : config.models.active;
+  const displayModel = formatModelDisplay(config.models.active, config.aliases);
   console.log(`  Provider: ${config.proxy.upstream}`);
   console.log(`  Model:    ${displayModel}`);
   console.log("");
@@ -550,7 +562,7 @@ async function cmdStop() {
   // Last resort: kill by port
   const port = getPort();
   try {
-    if (getPlatform() === "win32") {
+    if (getPlatform() === "windows") {
       run(`netstat -ano | findstr :${port} | findstr LISTENING`);
     } else {
       const pids = run(`lsof -ti:${port}`, { silent: true }).trim().split("\n").filter(Boolean);
@@ -602,13 +614,10 @@ async function cmdStatus() {
     const config = readConfig();
     const aliases = config.aliases || {};
     if (config.models?.active) {
-      const activeDisplay = aliases[config.models.active]
-        ? `${config.models.active} → ${aliases[config.models.active]}`
-        : config.models.active;
-      console.log(`  Model:    ${activeDisplay}`);
+      console.log(`  Model:    ${formatModelDisplay(config.models.active, aliases)}`);
     }
     if (config.models?.available?.length > 0) {
-      const availDisplay = config.models.available.map(m => aliases[m] ? `${m}→${aliases[m]}` : m);
+      const availDisplay = config.models.available.map(m => formatModelDisplay(m, aliases));
       console.log(`  Available: ${availDisplay.join(", ")}`);
     }
 
@@ -671,7 +680,7 @@ async function cmdLogs() {
   }
 
   try {
-    if (getPlatform() === "win32") {
+    if (getPlatform() === "windows") {
       run(`type ${LOG_FILE}`);
     } else {
       execFileSync("tail", ["-n", "50", "-f", LOG_FILE], { stdio: "inherit" });
@@ -805,7 +814,7 @@ async function configureProvider() {
         const data = JSON.parse(body);
         // BUILTIN_MODELS has 8 models — wait until models.dev fetch completes
         // (filtered count should be different from builtin-only count)
-        if (data.total > 0 && data.total <= 20) {
+        if (status === 200 && data.catalog_ready && data.total > 0) {
           filteredModels = data.models || [];
           break;
         }
@@ -905,7 +914,7 @@ async function configureProvider() {
     },
     models: {
       available: selectedModels,
-      active: activeAlias || activeModel,
+      active: activeModel,
       context_window: contextWindow,
     },
     aliases,

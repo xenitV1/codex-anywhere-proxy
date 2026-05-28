@@ -27,23 +27,25 @@ Codex CLI  --Responses API-->  codex-proxy  --chat/completions-->  Your provider
 ```
 proxy.ts              (12 lines)   Entry point — imports startServer from src/server.ts
 bin/
-  cli.cjs             (~350 lines) Node.js CLI — install, config, start, stop, status, models, logs (npx compatible)
+  cli.js              (~1200 lines) Node.js CLI — install, config, start, stop, status, models, logs (npx compatible)
 src/
-  config.ts           (34 lines)   Loads .env, exports UPSTREAM, KEY, PORT, FILTER_NON_FUNCTION_TOOLS
-  converters.ts      (159 lines)   Responses API <-> Chat Completions format converters
-  handler.ts          (98 lines)   POST /v1/responses handler — main proxy logic
-  models.ts          (260 lines)   Model catalog from models.dev + builtin fallback + MODELS_EXCLUDE
-  routes.ts          (199 lines)   HTTP route handlers (health, stats, models, context, pass-through)
-  server.ts          (114 lines)   HTTP server setup, route wiring, startup banner
-  session.ts          (33 lines)   In-memory session token usage tracking
-  streaming.ts       (225 lines)   SSE stream converter (chat/completions chunks -> Responses API events)
-test.ts               (88 lines)   Test runner — spawns dedicated proxy on TEST_PORT, runs all suites
+  config.ts           (~190 lines)  Loads config.toml + .env; CODEX_PROXY_TEST=1 for test isolation
+  converters.ts       (~200 lines)  Responses API <-> Chat Completions format converters
+  debug.ts            (~12 lines)   Conditional logging (DEBUG=1 or CODEX_PROXY_DEBUG=1)
+  handler.ts          (~120 lines)  POST /v1/responses handler — main proxy logic
+  models.ts           (~280 lines)  Model catalog from models.dev + builtin fallback + MODELS_EXCLUDE
+  routes.ts           (~245 lines)  HTTP route handlers (health, stats, models, context, pass-through)
+  server.ts           (114 lines)   HTTP server setup, route wiring, startup banner
+  session.ts          (33 lines)    In-memory session token usage tracking
+  streaming.ts        (~320 lines)  SSE converter with immediate response.created, early tool dispatch, reasoning UI
+  version.ts          (~15 lines)   Package version from package.json
+test.ts               (88 lines)    Test runner — spawns proxy with CODEX_PROXY_TEST=1 on TEST_PORT
 tests/
-  helpers.ts         (117 lines)   Test utilities: assertions, config, API helpers, SSE parser
-  endpoints.test.ts  (127 lines)   Health, stats, models, context, search endpoint tests
-  api.test.ts        (297 lines)   Real API tests: non-streaming, streaming, multi-turn, tools
-  streaming.test.ts   (87 lines)   Streaming-specific tests: SSE event sequence, tool call streaming
-  resilience.test.ts  (80 lines)   Error handling, tool filtering, pass-through, context tracking
+  helpers.ts          (~125 lines)  Test utilities: assertions, config, API helpers, SSE parser
+  endpoints.test.ts   (~135 lines)  Health, stats, models, context, catalog_ready tests
+  api.test.ts         (297 lines)   Real API tests: non-streaming, streaming, multi-turn, tools
+  streaming.test.ts   (~95 lines)   Streaming: event order, early tool dispatch
+  resilience.test.ts  (85 lines)    Error handling, tool filtering, pass-through, context tracking
   codex-compat.test.ts(132 lines)  Codex-specific: model catalog format, custom/namespace tools, headers
 ```
 
@@ -118,7 +120,7 @@ Codex CLI has `/v1/responses/compact` and `/v1/memories/trace_summarize` endpoin
 - **Real API:** Tests make actual HTTP requests to the configured upstream provider. Requires valid `API_KEY` in `.env`.
 - **Test structure:** Each test file exports a single `run()` function. Assertions use `assert()` / `assertEqual()` / `skip()` from helpers.
 - **Skipping:** Tests requiring an API key call `skip()` when `API_KEY` is empty. Tests always pass when no key is configured.
-- **Test suites:** endpoints (9 tests), api (11 tests), streaming (2 tests), resilience (4 tests), codex-compat (5 tests).
+- **Test suites:** endpoints (10 tests), api (11 tests), streaming (2 tests), resilience (4 tests), codex-compat (5 tests).
 
 ## Configuration
 
@@ -137,7 +139,15 @@ Codex CLI has `/v1/responses/compact` and `/v1/memories/trace_summarize` endpoin
 
 ### Config Loading (`src/config.ts`)
 
-Reads `.env` from CWD first, then `~/.codex-proxy/.env` as fallback. First found wins. Uses top-level `await import("fs")` — Bun supports this natively.
+Reads `~/.codex-proxy/config.toml` first, falls back to `.env` in CWD or install dir.
+Set `CODEX_PROXY_TEST=1` to let `.env` override config.toml (used by `test.ts`).
+
+### Streaming Performance (`src/streaming.ts`)
+
+- Sends `response.created` immediately (before upstream first byte)
+- Reasoning models: synthetic `reasoning` output item + passthrough of `reasoning_content` deltas
+- Tool calls: `output_item.added` on first chunk, `output_item.done` on `finish_reason: tool_calls` (not stream end)
+- Verbose timing logs when `DEBUG=1` or `CODEX_PROXY_DEBUG=1`
 
 ## Commit Conventions
 
@@ -172,9 +182,9 @@ Examples from this repo:
 
 No code changes needed. Users set `UPSTREAM_BASE_URL` and `API_KEY` in `.env`. If the provider's model names aren't in models.dev, add them to `BUILTIN_MODELS` in `src/models.ts` or use `MODELS_JSON` env var.
 
-## CLI (bin/cli.cjs)
+## CLI (bin/cli.js)
 
-Node.js CLI (`bin/cli.cjs`) — npx compatible, zero dependencies. Manages the full lifecycle:
+Node.js CLI (`bin/cli.js`) — npx compatible, zero dependencies. Manages the full lifecycle:
 
 | Command | What it does |
 |---------|-------------|

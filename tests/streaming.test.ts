@@ -22,7 +22,7 @@ export async function run() {
       assert(events.length > 0, `Received SSE events (${events.length})`);
 
       const eventTypes = events.map((e) => e.event);
-      assert(eventTypes.includes("response.created"), "Has response.created event");
+      assert(eventTypes[0] === "response.created", "response.created is first event");
       assert(eventTypes.includes("response.completed"), "Has response.completed event");
       assert(eventTypes.includes("response.output_text.delta"), "Has response.output_text.delta events");
 
@@ -74,6 +74,14 @@ export async function run() {
       if (completed) {
         const output = completed.data?.response?.output || [];
         const funcCall = output.find((o: any) => o.type === "function_call");
+        const toolDoneIdx = events.findIndex((e) =>
+          e.event === "response.output_item.done" &&
+          e.data?.item?.type === "function_call",
+        );
+        const completedIdx = events.findIndex((e) => e.event === "response.completed");
+        if (toolDoneIdx >= 0 && completedIdx >= 0) {
+          assert(toolDoneIdx < completedIdx, "tool output_item.done before response.completed");
+        }
         if (funcCall) {
           assert(funcCall.name === "calculate", `Tool name: ${funcCall.name}`);
           console.log(`    Streaming tool call: calculate(${funcCall.arguments})`);

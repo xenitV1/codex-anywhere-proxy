@@ -5,10 +5,11 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { UPSTREAM, KEY, AVAILABLE_MODELS, ACTIVE_MODEL, MODEL_ALIASES } from "./config.js";
-import { getModelInfo, getAllModels, getAllModelsUnfiltered, addAliasModels } from "./models.js";
+import { UPSTREAM, KEY, AVAILABLE_MODELS, ACTIVE_MODEL } from "./config.js";
+import { getModelInfo, getAllModels, getAllModelsUnfiltered, isCatalogReady } from "./models.js";
 import { sessionUsage } from "./session.js";
 import { readBody } from "./handler.js";
+import { VERSION } from "./version.js";
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -33,7 +34,7 @@ export function handleHealth(res: ServerResponse) {
     status: "ok",
     upstream: UPSTREAM,
     hasApiKey: !!KEY,
-    version: "1.2.0",
+    version: VERSION,
   }));
 }
 
@@ -95,6 +96,7 @@ export function handleModelsFiltered(res: ServerResponse) {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({
     total: entries.length,
+    catalog_ready: isCatalogReady(),
     active: ACTIVE_MODEL || "",
     available: AVAILABLE_MODELS || [],
     models: entries,
@@ -148,6 +150,19 @@ export function handleContext(res: ServerResponse, model: string) {
   }, null, 2));
 }
 
+
+/** Format a model slug into a human-readable display name. */
+function formatDisplayName(slug: string): string {
+  return slug
+    .split(/[-_]/)
+    .map((part) => {
+      if (/^\d/.test(part)) return part;
+      if (/^(glm|gpt|llm|qwen|vllm|lmi)$/i.test(part)) return part.toUpperCase();
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
+
 export async function handlePassThrough(req: IncomingMessage, res: ServerResponse, pathname: string) {
   const upstreamPath = UPSTREAM.replace(/\/$/, "") + pathname.replace("/v1", "");
   const passHeaders: Record<string, string> = { host: new URL(UPSTREAM).host };
@@ -181,11 +196,12 @@ export async function handlePassThrough(req: IncomingMessage, res: ServerRespons
  * Query params: ?client_version=0.99.0 (Codex always sends this)
  */
 export function handleCodexModelsList(res: ServerResponse) {
+  // Return real upstream model names as slugs. Codex uses these as available_models
+  // for spawn_agent validation and TUI display. No GPT aliasing needed.
   const allModels = getAllModels();
-  const modelsWithAliases = addAliasModels(allModels, MODEL_ALIASES);
-  const models = Object.entries(modelsWithAliases).map(([id, info]) => ({
+  const models = Object.entries(allModels).map(([id, info]) => ({
     slug: id,
-    display_name: id,
+    display_name: formatDisplayName(id),
     description: `${info.provider_name || "Unknown"} model — ${formatTokens(info.context_window)} context`,
     default_reasoning_level: info.reasoning ? "medium" : null,
     supported_reasoning_levels: info.reasoning
