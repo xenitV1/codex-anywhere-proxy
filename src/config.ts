@@ -17,6 +17,7 @@ interface ProxyConfig {
   apiKey: string;
   port: number;
   filterNonFunctionTools: boolean;
+  debug: boolean;
   modelsFilter: string;
   modelsExclude: string;
   /** Models selected by user during install/config */
@@ -94,6 +95,7 @@ function readTomlConfig(): ProxyConfig {
     apiKey: "",
     port: 8765,
     filterNonFunctionTools: true,
+    debug: false,
     modelsFilter: "",
     modelsExclude: "",
     availableModels: [],
@@ -122,6 +124,7 @@ function readTomlConfig(): ProxyConfig {
       apiKey: proxy.api_key || defaults.apiKey,
       port: proxy.port || defaults.port,
       filterNonFunctionTools: proxy.filter_non_function_tools !== false,
+      debug: proxy.debug === true,
       modelsFilter: proxy.models_filter || defaults.modelsFilter,
       modelsExclude: proxy.models_exclude || defaults.modelsExclude,
       availableModels: Array.isArray(models.available) ? models.available : defaults.availableModels,
@@ -182,6 +185,7 @@ export const KEY = configOrEnv(
 );
 export const PORT = parseInt(process.env.PORT || String(tomlConfig.port), 10) || 8765;
 export const FILTER_NON_FUNCTION_TOOLS = tomlConfig.filterNonFunctionTools;
+export const PROXY_DEBUG = tomlConfig.debug;
 export const MODELS_FILTER = configOrEnv(tomlConfig.modelsFilter, process.env.MODELS_FILTER, "");
 export const MODELS_EXCLUDE = configOrEnv(tomlConfig.modelsExclude, process.env.MODELS_EXCLUDE, "");
 export const AVAILABLE_MODELS = tomlConfig.availableModels;

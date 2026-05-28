@@ -156,6 +156,7 @@ function writeConfig(config) {
     `api_key = "${config.proxy?.api_key || ""}"`,
     `port = ${config.proxy?.port || DEFAULT_PORT}`,
     `filter_non_function_tools = ${config.proxy?.filter_non_function_tools !== false}`,
+    `debug = ${config.proxy?.debug === true}`,
     "",
     "[models]",
   ];
@@ -1105,6 +1106,8 @@ function setupService(bunPath, platform) {
       `Restart=on-failure`,
       `RestartSec=3`,
       `Environment=HOME=${os.homedir()}`,
+      `StandardOutput=append:${LOG_FILE}`,
+      `StandardError=append:${LOG_FILE}`,
       `WorkingDirectory=${INSTALL_DIR}`,
       ``,
       `[Install]`,
