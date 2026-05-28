@@ -5,8 +5,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { UPSTREAM, KEY, AVAILABLE_MODELS, ACTIVE_MODEL } from "./config.js";
-import { getModelInfo, getAllModels, getAllModelsUnfiltered } from "./models.js";
+import { UPSTREAM, KEY, AVAILABLE_MODELS, ACTIVE_MODEL, MODEL_ALIASES } from "./config.js";
+import { getModelInfo, getAllModels, getAllModelsUnfiltered, addAliasModels } from "./models.js";
 import { sessionUsage } from "./session.js";
 import { readBody } from "./handler.js";
 
@@ -182,7 +182,8 @@ export async function handlePassThrough(req: IncomingMessage, res: ServerRespons
  */
 export function handleCodexModelsList(res: ServerResponse) {
   const allModels = getAllModels();
-  const models = Object.entries(allModels).map(([id, info]) => ({
+  const modelsWithAliases = addAliasModels(allModels, MODEL_ALIASES);
+  const models = Object.entries(modelsWithAliases).map(([id, info]) => ({
     slug: id,
     display_name: id,
     description: `${info.provider_name || "Unknown"} model — ${formatTokens(info.context_window)} context`,

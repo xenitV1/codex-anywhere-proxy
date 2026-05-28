@@ -25,6 +25,8 @@ interface ProxyConfig {
   activeModel: string;
   /** Context window for active model */
   contextWindow: number;
+  /** Model aliases: codex_name -> upstream_name */
+  modelAliases: Record<string, string>;
 }
 
 /**
@@ -48,7 +50,7 @@ function parseToml(text: string): Record<string, any> {
     }
 
     // key = value
-    const kvMatch = line.match(/^(\w+)\s*=\s*(.+)$/);
+    const kvMatch = line.match(/^([\w.-]+)\s*=\s*(.+)$/);
     if (kvMatch) {
       const key = kvMatch[1].trim();
       let val: any = kvMatch[2].trim();
@@ -96,6 +98,7 @@ function readTomlConfig(): ProxyConfig {
     modelsExclude: "",
     availableModels: [],
     activeModel: "",
+    modelAliases: {},
     contextWindow: 200000,
   };
 
@@ -107,6 +110,13 @@ function readTomlConfig(): ProxyConfig {
     const proxy = parsed.proxy || {};
     const models = parsed.models || {};
 
+    // Parse [aliases] section: key = "value" pairs
+    const aliases = parsed.aliases || {};
+    const modelAliases: Record<string, string> = {};
+    for (const [key, val] of Object.entries(aliases)) {
+      if (typeof val === "string") modelAliases[key] = val;
+    }
+
     return {
       upstream: proxy.upstream || defaults.upstream,
       apiKey: proxy.api_key || defaults.apiKey,
@@ -116,6 +126,7 @@ function readTomlConfig(): ProxyConfig {
       modelsExclude: proxy.models_exclude || defaults.modelsExclude,
       availableModels: Array.isArray(models.available) ? models.available : defaults.availableModels,
       activeModel: models.active || defaults.activeModel,
+      modelAliases,
       contextWindow: models.context_window || defaults.contextWindow,
     };
   } catch {
@@ -160,3 +171,12 @@ export const MODELS_EXCLUDE = tomlConfig.modelsExclude || process.env.MODELS_EXC
 export const AVAILABLE_MODELS = tomlConfig.availableModels;
 export const ACTIVE_MODEL = tomlConfig.activeModel;
 export const CONTEXT_WINDOW = tomlConfig.contextWindow;
+export const MODEL_ALIASES = tomlConfig.modelAliases;
+
+/**
+ * Resolve a model name: if it's an alias, return the upstream model name.
+ * Otherwise return the name as-is.
+ */
+export function resolveModel(model: string): string {
+  return tomlConfig.modelAliases[model] || model;
+}

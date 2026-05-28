@@ -274,3 +274,22 @@ export function getAllModels(): Record<string, ModelInfo> {
 export function getAllModelsUnfiltered(): Record<string, ModelInfo> {
   return modelsCache.allModels;
 }
+
+/**
+ * Add alias models to a models map.
+ * Each alias gets the same ModelInfo as its target upstream model.
+ */
+export function addAliasModels(
+  models: Record<string, ModelInfo>,
+  aliases: Record<string, string>,
+): Record<string, ModelInfo> {
+  if (!aliases || Object.keys(aliases).length === 0) return models;
+  const result = { ...models };
+  for (const [alias, target] of Object.entries(aliases)) {
+    const targetInfo = result[target];
+    if (targetInfo) {
+      result[alias] = { ...targetInfo };
+    }
+  }
+  return result;
+}

@@ -95,6 +95,43 @@ function readConfig() {
   return result;
 }
 
+
+/**
+ * Maps upstream model names to Codex CLI-compatible aliases.
+ * Codex CLI only allows spawn_agent for models it knows (gpt-*, o3, o4).
+ * Auto-detects best match based on the upstream model name.
+ */
+const CODEX_MODEL_MAP = [
+  { pattern: /^glm-5\.1$/i,        codex: "gpt-5.4",       vision: "gpt-5.4" },
+  { pattern: /^glm-5$/i,            codex: "gpt-5.4",       vision: "gpt-5.4" },
+  { pattern: /^glm-5-turbo$/i,      codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^glm-5v-turbo$/i,     codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^glm-4\.7$/i,        codex: "gpt-5.2",       vision: "gpt-5.2" },
+  { pattern: /^glm-4$/i,            codex: "gpt-5.2",       vision: "gpt-5.2" },
+  { pattern: /^deepseek-chat$/i,    codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^deepseek-reasoner/i, codex: "o4-mini",       vision: "o4-mini" },
+  { pattern: /^deepseek/i,          codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^qwen/i,              codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^llama/i,             codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^mistral/i,           codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^claude/i,            codex: "gpt-5.4",       vision: "gpt-5.4" },
+  { pattern: /^gemini/i,            codex: "gpt-5.4",       vision: "gpt-5.4" },
+  { pattern: /^minimax/i,           codex: "gpt-5.4-mini",  vision: "gpt-5.4-mini" },
+  { pattern: /^gpt-/i,             codex: null,             vision: null },
+  { pattern: /^o[34]/i,            codex: null,             vision: null },
+];
+
+function getCodexAlias(modelName, forVision = false) {
+  if (!modelName) return null;
+  if (/^(gpt-|o[34]|codex)/i.test(modelName)) return null;
+  for (const entry of CODEX_MODEL_MAP) {
+    if (entry.pattern.test(modelName)) {
+      return forVision ? (entry.vision || entry.codex) : entry.codex;
+    }
+  }
+  return "gpt-5.4-mini";
+}
+
 function writeConfig(config) {
   const lines = [
     "# codex-proxy configuration",
@@ -118,6 +155,18 @@ function writeConfig(config) {
 
   lines.push(`active = "${config.models?.active || ""}"`);
   lines.push(`context_window = ${config.models?.context_window || 200000}`);
+
+  // Write [aliases] section for Codex CLI compatibility
+  const aliases = config.aliases || {};
+  const aliasEntries = Object.entries(aliases).filter(([k, v]) => k && v);
+  if (aliasEntries.length > 0) {
+    lines.push("");
+    lines.push("[aliases]");
+    for (const [alias, target] of aliasEntries) {
+      lines.push(`${alias} = "${target}"`);
+    }
+  }
+
   lines.push("");
 
   fs.writeFileSync(CONFIG_FILE, lines.join("\n"));
@@ -356,8 +405,11 @@ async function cmdInstall() {
   console.log(`║  ✓  Installation complete!                       ║`);
   console.log(`╚══════════════════════════════════════════════════╝${R}`);
   console.log("");
+  const displayModel = config.aliases?.[config.models.active]
+    ? `${config.models.active} → ${config.aliases[config.models.active]}`
+    : config.models.active;
   console.log(`  Provider: ${config.proxy.upstream}`);
-  console.log(`  Model:    ${config.models.active}`);
+  console.log(`  Model:    ${displayModel}`);
   console.log("");
   console.log("  Start coding:");
   console.log(`    ${BLU}codex${R}`);
@@ -548,11 +600,16 @@ async function cmdStatus() {
 
     // Show config
     const config = readConfig();
+    const aliases = config.aliases || {};
     if (config.models?.active) {
-      console.log(`  Model:    ${config.models.active}`);
+      const activeDisplay = aliases[config.models.active]
+        ? `${config.models.active} → ${aliases[config.models.active]}`
+        : config.models.active;
+      console.log(`  Model:    ${activeDisplay}`);
     }
     if (config.models?.available?.length > 0) {
-      console.log(`  Available: ${config.models.available.join(", ")}`);
+      const availDisplay = config.models.available.map(m => aliases[m] ? `${m}→${aliases[m]}` : m);
+      console.log(`  Available: ${availDisplay.join(", ")}`);
     }
 
     // Also get stats
@@ -803,7 +860,43 @@ async function configureProvider() {
     log("ok", `Model: ${activeModel} (${contextWindow} context)`);
   }
 
-  // ── Write final config.toml
+  // ── Vision model selection ──
+  let visionModel = "";
+  if (filteredModels.length > 1) {
+    console.log("");
+    console.log(`${BOLD}  Vision model (for image analysis):${R}`);
+    console.log("    0) None");
+    for (let i = 0; i < selectedModels.length; i++) {
+      const m = filteredModels.find(fm => fm.id === selectedModels[i]);
+      const ctx = m ? ` (${(m.context_window / 1000).toFixed(0)}k)` : "";
+      const marker = selectedModels[i] === activeModel ? ` ${GRN}(active)${R}` : "";
+      console.log(`    ${i + 1}) ${selectedModels[i]}${ctx}${marker}`);
+    }
+    console.log("");
+    const visionChoice = await ask("Select vision model [0 = none]", "0");
+    const visionIdx = parseInt(visionChoice, 10) - 1;
+    if (visionIdx >= 0 && visionIdx < selectedModels.length) {
+      visionModel = selectedModels[visionIdx];
+      log("ok", `Vision model: ${visionModel}`);
+    }
+  }
+
+  // ── Build aliases for Codex CLI compatibility ──
+  const aliases = {};
+  const activeAlias = getCodexAlias(activeModel);
+  if (activeAlias) {
+    aliases[activeAlias] = activeModel;
+    log("info", `Codex alias: ${activeAlias} → ${activeModel}`);
+  }
+  if (visionModel && visionModel !== activeModel) {
+    const visionAlias = getCodexAlias(visionModel, true);
+    if (visionAlias && visionAlias !== activeAlias) {
+      aliases[visionAlias] = visionModel;
+      log("info", `Vision alias: ${visionAlias} → ${visionModel}`);
+    }
+  }
+
+  // ── Write final config.toml ──
   const finalConfig = {
     proxy: {
       upstream: upstreamUrl,
@@ -812,9 +905,10 @@ async function configureProvider() {
     },
     models: {
       available: selectedModels,
-      active: activeModel,
+      active: activeAlias || activeModel,
       context_window: contextWindow,
     },
+    aliases,
   };
   writeConfig(finalConfig);
 

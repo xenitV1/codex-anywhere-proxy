@@ -6,7 +6,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { UPSTREAM, KEY, FILTER_NON_FUNCTION_TOOLS, ACTIVE_MODEL, AVAILABLE_MODELS } from "./config.js";
+import { UPSTREAM, KEY, FILTER_NON_FUNCTION_TOOLS, ACTIVE_MODEL, AVAILABLE_MODELS, MODEL_ALIASES, resolveModel } from "./config.js";
 import { getModelInfo } from "./models.js";
 import { updateSessionUsage } from "./session.js";
 import { responsesInputToChatMessages, responsesToolsToChatTools, chatToResponses } from "./converters.js";
@@ -32,14 +32,23 @@ export async function handleResponsesRequest(
   const stream = body.stream !== false;
 
   // ── Model mapping ──
-  // If the requested model is not in our available models list,
-  // fall back to the active model. This handles spawn_agent sending
-  // OpenAI model names (o3, gpt-4.1, etc.) to non-OpenAI providers.
-  const available = AVAILABLE_MODELS.length > 0 ? AVAILABLE_MODELS : [ACTIVE_MODEL];
-  let model = requestedModel;
-  if (!available.includes(requestedModel) && ACTIVE_MODEL) {
-    console.log(`[MODEL] Mapping unknown model "${requestedModel}" → "${ACTIVE_MODEL}"`);
-    model = ACTIVE_MODEL;
+  // All model names must be resolved to upstream names before sending.
+  // Alias names (e.g. "gpt-5.4") map to upstream names (e.g. "glm-5.1").
+  // Unknown Codex models (e.g. "gpt-5.5" sent by spawn_agent) fall back to ACTIVE_MODEL.
+  const activeUpstream = resolveModel(ACTIVE_MODEL) || ACTIVE_MODEL;
+  let model = resolveModel(requestedModel);
+  if (!model || model === requestedModel) {
+    // Not an alias — check if it's a known upstream model
+    const available = AVAILABLE_MODELS.length > 0 ? AVAILABLE_MODELS : [ACTIVE_MODEL];
+    const allUpstream = available.map(m => resolveModel(m) || m);
+    if (!allUpstream.includes(requestedModel) && activeUpstream) {
+      console.log(`[MODEL] Mapping unknown model "${requestedModel}" → "${activeUpstream}"`);
+      model = activeUpstream;
+    } else {
+      model = requestedModel;
+    }
+  } else {
+    console.log(`[ALIAS] "${requestedModel}" → "${model}"`);
   }
 
   const chatRequest: Record<string, unknown> = {
@@ -108,5 +117,5 @@ export function readBody(req: IncomingMessage): Promise<string> {
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     req.on("error", reject);
-  });
+ });
 }
