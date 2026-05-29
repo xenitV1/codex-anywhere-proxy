@@ -14,16 +14,30 @@ export function responsesInputToChatMessages(body: Record<string, any>): any[] {
       messages.push({ role: "user", content: item });
     } else if (item.type === "message") {
       const role = item.role === "developer" ? "system" : item.role;
-      let content = "";
+      const parts: string[] = [];
+      const images: string[] = [];
       if (Array.isArray(item.content)) {
         for (const c of item.content) {
           if (c.type === "input_text" || c.type === "output_text" || c.type === "text") {
-            content += c.text || "";
+            parts.push(c.text || "");
+          } else if (c.type === "input_image") {
+            const url = c.image_url || c.url || "";
+            images.push(url ? (url.length > 80 ? url.slice(0, 40) + "…" + url.slice(-20) : url) : "(image)");
+          } else if (c.type === "input_file") {
+            parts.push(`[file: ${c.filename || c.name || "unknown"}]`);
+          } else if (c.type === "refusal") {
+            parts.push(c.refusal || "(refused)");
+          } else if (c.text) {
+            parts.push(c.text);
           }
         }
       } else if (typeof item.content === "string") {
-        content = item.content;
+        parts.push(item.content);
       }
+      if (images.length > 0) {
+        parts.push(`[user attached ${images.length} image(s) — not supported by this model]`);
+      }
+      const content = parts.join("");
       if (content) messages.push({ role, content });
     } else if (item.type === "function_call") {
       messages.push({
