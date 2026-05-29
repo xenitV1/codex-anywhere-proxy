@@ -28,7 +28,7 @@ export function responsesInputToChatMessages(body: Record<string, any>): any[] {
     } else if (item.type === "function_call") {
       messages.push({
         role: "assistant",
-        content: null,
+        content: "",
         tool_calls: [{
           id: item.call_id || item.id,
           type: "function",
@@ -36,7 +36,7 @@ export function responsesInputToChatMessages(body: Record<string, any>): any[] {
         }],
       });
     } else if (item.type === "function_call_output") {
-      messages.push({ role: "tool", content: item.output, tool_call_id: item.call_id });
+      messages.push({ role: "tool", content: item.output ?? "", tool_call_id: item.call_id });
     }
   }
   if (messages.length === 0) messages.push({ role: "user", content: "Hello." });
