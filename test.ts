@@ -14,6 +14,7 @@ import { run as runApi } from "./tests/api.test.js";
 import { run as runStreaming } from "./tests/streaming.test.js";
 import { run as runResilience } from "./tests/resilience.test.js";
 import { run as runCodexCompat } from "./tests/codex-compat.test.js";
+import { run as runConverter } from "./tests/converter.test.js";
 
 // ─── Spawn test proxy on TEST_PORT ─────────────────────────────
 const testPort = parseInt(new URL(PROXY_URL).port, 10);
@@ -51,7 +52,10 @@ console.log(`   Model:    ${MODEL}`);
 console.log(`   API Key:  ${API_KEY ? "✓ configured" : "✗ missing"}\n`);
 
 try {
-  console.log("═══ Endpoint Tests ═══");
+  console.log("═══ Converter Unit Tests ═══");
+  await runConverter();
+
+  console.log("\n═══ Endpoint Tests ═══");
   await runEndpoints();
 
   console.log("\n═══ Real API Tests ═══");

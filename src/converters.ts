@@ -4,10 +4,21 @@
  * Converts between OpenAI Responses API and Chat Completions API formats.
  */
 
+/**
+ * Force a value to be a string. Handles arrays, objects, null, undefined.
+ */
+function forceString(val: unknown): string {
+  if (typeof val === "string") return val;
+  if (val == null) return "";
+  if (Array.isArray(val)) return JSON.stringify(val);
+  if (typeof val === "object") return JSON.stringify(val);
+  return String(val);
+}
+
 export function responsesInputToChatMessages(body: Record<string, any>): any[] {
   const messages: any[] = [];
   if (body.instructions) {
-    messages.push({ role: "system", content: body.instructions });
+    messages.push({ role: "system", content: forceString(body.instructions) });
   }
   for (const item of body.input || []) {
     if (typeof item === "string") {
@@ -21,8 +32,7 @@ export function responsesInputToChatMessages(body: Record<string, any>): any[] {
           if (c.type === "input_text" || c.type === "output_text" || c.type === "text") {
             parts.push(c.text || "");
           } else if (c.type === "input_image") {
-            const url = c.image_url || c.url || "";
-            images.push(url ? (url.length > 80 ? url.slice(0, 40) + "…" + url.slice(-20) : url) : "(image)");
+            images.push("(image)");
           } else if (c.type === "input_file") {
             parts.push(`[file: ${c.filename || c.name || "unknown"}]`);
           } else if (c.type === "refusal") {
@@ -35,22 +45,39 @@ export function responsesInputToChatMessages(body: Record<string, any>): any[] {
         parts.push(item.content);
       }
       if (images.length > 0) {
-        parts.push(`[user attached ${images.length} image(s) — not supported by this model]`);
+        parts.push(
+          `[User attached ${images.length} image(s). ` +
+          `You cannot view images. ` +
+          `If a vision/image analysis tool is available, use it to analyze the image. ` +
+          `Otherwise, tell the user you cannot analyze images and continue with the next task.]`,
+        );
       }
       const content = parts.join("");
       if (content) messages.push({ role, content });
     } else if (item.type === "function_call") {
-      messages.push({
-        role: "assistant",
-        content: "",
-        tool_calls: [{
-          id: item.call_id || item.id,
-          type: "function",
-          function: { name: item.name, arguments: item.arguments || "{}" },
-        }],
-      });
+      const newToolCall = {
+        id: item.call_id || item.id,
+        type: "function" as const,
+        function: { name: item.name, arguments: item.arguments || "{}" },
+      };
+      // Merge into previous assistant message if possible (avoids consecutive assistant messages)
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg && lastMsg.role === "assistant") {
+        if (!lastMsg.tool_calls) lastMsg.tool_calls = [];
+        lastMsg.tool_calls.push(newToolCall);
+      } else {
+        messages.push({
+          role: "assistant",
+          content: "",
+          tool_calls: [newToolCall],
+        });
+      }
     } else if (item.type === "function_call_output") {
-      messages.push({ role: "tool", content: item.output ?? "", tool_call_id: item.call_id });
+      messages.push({
+        role: "tool",
+        content: forceString(item.output),
+        tool_call_id: item.call_id,
+      });
     }
   }
   if (messages.length === 0) messages.push({ role: "user", content: "Hello." });
