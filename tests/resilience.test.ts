@@ -82,4 +82,30 @@ export async function run() {
       console.error(`    Error: ${err.slice(0, 200)}`);
     }
   }
+
+
+  // Configured key overrides wrong Authorization header (fixes #1)
+  console.log("\nTest 5: Configured key overrides wrong auth header");
+  {
+    const resp = await fetch(`${PROXY_URL}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer sk-wrong-invalid-key-that-should-fail",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        input: "Say KEY_OK",
+        stream: false,
+      }),
+    });
+    // With the fix, proxy ignores the wrong header and uses KEY from config.toml
+    assert(resp.ok, "Proxy uses configured key, not wrong auth header");
+    if (resp.ok) {
+      const data: any = await resp.json();
+      const text = (data.output || []).find((o: any) => o.type === "message")?.content?.[0]?.text || "";
+      assert(text.length > 0, "Got response despite wrong auth header");
+      console.log("    Response: \"" + text.slice(0, 60) + "\"");
+    }
+  }
 }

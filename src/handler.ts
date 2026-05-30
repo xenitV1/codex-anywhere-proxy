@@ -35,7 +35,7 @@ export async function handleResponsesRequest(
   }
 
   const authHeader = req.headers.authorization || "";
-  const apiKey = authHeader.replace("Bearer ", "") || KEY;
+  const apiKey = KEY || authHeader.replace("Bearer ", "");
 
   const chatMessages = responsesInputToChatMessages(body);
   const { tools, toolNamespaces } = responsesToolsToChatTools(body.tools, FILTER_NON_FUNCTION_TOOLS);
