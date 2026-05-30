@@ -36,6 +36,9 @@ export async function handleResponsesRequest(
 
   const authHeader = req.headers.authorization || "";
   const apiKey = KEY || authHeader.replace("Bearer ", "");
+  if (KEY && authHeader) {
+    proxyLog("[AUTH] Using configured API key (ignoring incoming Authorization header)");
+  }
 
   const chatMessages = responsesInputToChatMessages(body);
   const { tools, toolNamespaces } = responsesToolsToChatTools(body.tools, FILTER_NON_FUNCTION_TOOLS);
